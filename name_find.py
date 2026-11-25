@@ -26,6 +26,11 @@ from urllib.parse import unquote, urlparse
 MIN_RATIO = 0.80
 MAX_RATIO = 1.00
 
+# Small files: also pass if the clean file is at most this many words shorter
+# than the old one, whatever the ratio. A 600-word story with a 200-word header
+# fails the ratio (0.75) but is clearly the same story.
+MAX_WORD_DIFF = 300
+
 # How similar a normalized name must be (0-1) to count as a fuzzy match.
 FUZZY_CUTOFF = 0.85
 
@@ -50,7 +55,7 @@ KNOWN_EXTENSIONS = {".txt", ".pdf"}
 TRANSLATED_SUFFIX = re.compile(r"[\s_\-]+e$", re.IGNORECASE)
 
 CSV_COLUMNS = [
-    "clean_name", "old_name", "status", "translated",
+    "clean_name", "old_name", "status",
     "clean_words", "old_words", "size_ratio",
 ]
 
@@ -173,8 +178,13 @@ def size_ratio(clean_words, old_words):
     return clean_words / old_words
 
 
-def size_ok(ratio) -> bool:
-    return ratio is not None and MIN_RATIO <= ratio <= MAX_RATIO
+def size_ok(clean_words, old_words) -> bool:
+    """Clean is no longer than old, and either within the ratio band or
+    within MAX_WORD_DIFF words of it."""
+    ratio = size_ratio(clean_words, old_words)
+    if ratio is None or ratio > MAX_RATIO:
+        return False
+    return ratio >= MIN_RATIO or old_words - clean_words <= MAX_WORD_DIFF
 
 
 def match_one(clean_file: Path, index: dict, old_keys: list):
@@ -206,7 +216,7 @@ def match_one(clean_file: Path, index: dict, old_keys: list):
     # Several old files share this normalized name: let the size check pick.
     if len(candidates) > 1:
         sized = [(c, word_count(c)) for c in candidates]
-        passing = [(c, w) for c, w in sized if size_ok(size_ratio(clean_words, w))]
+        passing = [(c, w) for c, w in sized if size_ok(clean_words, w)]
         if len(passing) == 1 and not translated:
             candidates = [passing[0][0]]
         else:
@@ -220,7 +230,7 @@ def match_one(clean_file: Path, index: dict, old_keys: list):
         status = "fuzzy"
     elif old.suffix.lower() == ".pdf":
         status = "found_pdf"
-    elif translated or size_ok(ratio):
+    elif translated or size_ok(clean_words, old_words):
         status = "found"            # translated files skip the size check
     else:
         status = "found_size_mismatch"
@@ -280,7 +290,6 @@ def main():
                 str(cf.relative_to(clean_dir)),
                 old_name,
                 status,
-                "yes" if translated else "no",
                 "" if cw is None else cw,
                 "" if ow is None else ow,
                 "" if ratio is None else f"{ratio:.3f}",
