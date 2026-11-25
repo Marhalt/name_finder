@@ -3,8 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 
-# Generated manifests (run output, contains corpus file names)
-manifest_*.csv
+# Generated manifests and author lists (run output, contains corpus file names)
+*.csv
 
 # macOS
 .DS_Store
