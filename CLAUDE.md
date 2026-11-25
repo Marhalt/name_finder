@@ -9,7 +9,10 @@
 ## Pipeline for recovering authors
 
 1. **Step 1, `name_find.py` (current):** match each cleaned file to its original in `/old` and write a CSV manifest. It is being tested on progressively larger cleaned subdirectories, and each one serves as a test bed.
-2. **Step 2 (planned):** send the first ~1000 words of each matched old file to an LLM, ask it for the author, and add the answer to the manifest.
+2. **Step 2, `author_find.py`:** for each manifest row, send part of the matched old file to a local LLM (LM Studio) and write story, author and note to an `authors_*.csv`. It resumes interrupted runs. If nothing is found, it falls back to a `_by_xxx` clean filename, then to the first lines of the clean story.
+   - It sends the **first 700 words plus the last 200** (`HEAD_WORDS` / `TAIL_WORDS`), because some sites put the byline or copyright at the end (changed from the first 1200 words on 2026-11-25).
+   - A `[... middle of story omitted ...]` marker separates the two parts, and the prompt says the byline may be at either end.
+   - Files of 900 words or fewer are sent whole.
 
 Judge changes to `name_find.py` by whether they give step 2 a reliable old-file path for every clean file.
 
@@ -25,4 +28,3 @@ Judge changes to `name_find.py` by whether they give step 2 a reliable old-file 
 - Flag old files that more than one clean file matched, ideally across all manifests.
 - Apply the size check to fuzzy matches too.
 - PDFs (`found_pdf`) will need text extraction before step 2.
-- For step 2, consider sending the first ~700 words plus the last ~300, because some sites put the byline at the end.

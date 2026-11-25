@@ -2,8 +2,8 @@
 """
 author_find.py - recover the author of each story using a name_find.py manifest.
 
-For every row in the manifest, read the first WORDS_TO_SEND words of the
-matched OLD file, ask the LLM served by LM Studio for the author, and write
+For every row in the manifest, read the first HEAD_WORDS and last TAIL_WORDS
+words of the matched OLD file (some sites put the byline at the end), ask the LLM served by LM Studio for the author, and write
 story, author, note to an authors CSV (and to the console).
 
 Rows already in the authors CSV are skipped, so an interrupted run can be
@@ -44,16 +44,20 @@ from name_find import clean_path_input, ask_for_dir, normalize, read_text, split
 # ---------------------------------------------------------------- settings ---
 
 LMSTUDIO_URL = "http://127.0.0.1:1234/v1/chat/completions"
-WORDS_TO_SEND = 1200
+HEAD_WORDS = 700           # words sent from the start of the old file
+TAIL_WORDS = 200           # words sent from the end (some bylines are there)
+OMITTED_MARKER = "\n\n[... middle of story omitted ...]\n\n"
 CLEAN_LINES_TO_SEND = 6     # non-blank lines from the start of the clean story
 TEMPERATURE = 0.0
 TIMEOUT = 300   # seconds; generous because reasoning models think first
 
 SYSTEM_PROMPT = (
-    "You identify the author of a story from the beginning of its text file. "
-    "The text may include a header from the website it came from, a title, "
-    "and a byline such as 'by John Smith', 'Author: jsmith', or "
-    "'Copyright 2004 Jane Doe'. Reply with the author's name or username "
+    "You identify the author of a story from its text file. You are given the "
+    "beginning of the file and, for longer files, its end, with the middle "
+    "omitted. The text may include a header or footer from the website it "
+    "came from, a title, and a byline such as 'by John Smith', "
+    "'Author: jsmith', or 'Copyright 2004 Jane Doe'. The byline may be at "
+    "the start or at the end. Reply with the author's name or username "
     "exactly as written in the text, and nothing else: no explanation, no "
     "punctuation, no 'by'. Do not guess. If no author is named, reply with "
     "exactly: unknown"
@@ -75,18 +79,19 @@ UNKNOWN_REPLIES = re.compile(
 NOT_AUTHORS = {"me", "you", "us", "them", "him", "her", "it", "my", "the", "a",
                "surprise", "force", "night", "day", "chance", "accident"}
 
-OUT_COLUMNS = ["story", "author", "note"]
+OUT_COLUMNS = ["story", "clean_words", "author", "note"]
 
 
 # ------------------------------------------------------------------- text ---
 
-def first_words(text: str, n: int) -> str:
-    """The text up to the end of its n-th word, keeping the original line
-    breaks so the LLM still sees the header layout."""
-    for i, m in enumerate(re.finditer(r"\S+", text), 1):
-        if i == n:
-            return text[: m.end()]
-    return text
+def head_and_tail(text: str, head: int = HEAD_WORDS, tail: int = TAIL_WORDS) -> str:
+    """The first `head` and last `tail` words of the text, joined by
+    OMITTED_MARKER, keeping the original line breaks so the LLM still sees
+    the header and footer layout. Short texts are returned whole."""
+    words = list(re.finditer(r"\S+", text))
+    if len(words) <= head + tail:
+        return text
+    return text[: words[head - 1].end()] + OMITTED_MARKER + text[words[-tail].start():]
 
 
 def first_lines(text: str, n: int) -> str:
@@ -152,7 +157,7 @@ def check_server():
 def author_of_file(old_file: Path):
     """(author, notes) for one old text file."""
     try:
-        text = first_words(read_text(old_file), WORDS_TO_SEND)
+        text = head_and_tail(read_text(old_file))
     except OSError:
         return "unknown", ["no_old_file"]
     return author_of_text(text)
@@ -285,11 +290,26 @@ def main():
     with open(manifest, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
 
+    clean_words = {r["clean_name"]: r.get("clean_words", "") for r in rows}
+
     # Resume: skip stories already in the authors file.
     done = set()
     if out_path.is_file():
         with open(out_path, newline="", encoding="utf-8-sig") as f:
-            done = {r["story"] for r in csv.DictReader(f)}
+            reader = csv.DictReader(f)
+            existing = list(reader)
+            columns = reader.fieldnames
+        done = {r["story"] for r in existing}
+        if columns != OUT_COLUMNS:
+            # Older authors file: rewrite it with the current columns,
+            # filling clean_words from the manifest.
+            with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.DictWriter(f, fieldnames=OUT_COLUMNS, extrasaction="ignore")
+                writer.writeheader()
+                for r in existing:
+                    r.setdefault("clean_words", clean_words.get(r["story"], ""))
+                    writer.writerow(r)
+            print(f"Updated {out_path.name} to columns: {', '.join(OUT_COLUMNS)}")
     else:
         with open(out_path, "w", newline="", encoding="utf-8-sig") as f:   # BOM for Excel
             csv.writer(f).writerow(OUT_COLUMNS)
@@ -306,7 +326,7 @@ def main():
             author, note = process_row(row, old_dir, clean_dir)
             if author != "unknown":
                 authors_found += 1
-            writer.writerow([row["clean_name"], author, note])
+            writer.writerow([row["clean_name"], row.get("clean_words", ""), author, note])
             f.flush()
             for n in note.split("; "):
                 counts[n] = counts.get(n, 0) + 1
