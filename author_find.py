@@ -79,7 +79,7 @@ UNKNOWN_REPLIES = re.compile(
 NOT_AUTHORS = {"me", "you", "us", "them", "him", "her", "it", "my", "the", "a",
                "surprise", "force", "night", "day", "chance", "accident"}
 
-OUT_COLUMNS = ["story", "clean_words", "author", "note"]
+OUT_COLUMNS = ["story", "author", "note", "clean_words"]
 
 
 # ------------------------------------------------------------------- text ---
@@ -326,7 +326,7 @@ def main():
             author, note = process_row(row, old_dir, clean_dir)
             if author != "unknown":
                 authors_found += 1
-            writer.writerow([row["clean_name"], row.get("clean_words", ""), author, note])
+            writer.writerow([row["clean_name"], author, note, row.get("clean_words", "")])
             f.flush()
             for n in note.split("; "):
                 counts[n] = counts.get(n, 0) + 1
